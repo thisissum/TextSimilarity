@@ -56,3 +56,64 @@ class ESIM(nn.Module):
         return output
 
 
+class InferSent(nn.Module):
+    """Implementation of InferSent paper from facebook
+    Use BiLSTM as encoder and compute inter connection by abs and abstract
+    """
+    def __init__(self, model_args):
+        super(InferSent, self).__init__()
+        self.model_args = model_args
+        model_args.inject_to(self)
+        self.BiLSTM_Encoder = nn.LSTM(
+            self.emb_dim, 
+            self.hidden_dim, 
+            self.num_layers, 
+            dropout=self.dropout, 
+            batch_first=True, 
+            bidirectional=True,)
+        self.MaxPooling = nn.AdaptiveMaxPool1d(1)
+        self.fc = nn.Sequential(nn.Linear(
+            2 * self.hidden_dim * 4, 512), 
+            nn.Tanh(),
+            nn.Linear(512, self.output_dim))
+    
+    def forward(self, emb_seq1, emb_seq2):
+        encoded_seq1, _ = self.BiLSTM_Encoder(emb_seq1)
+        encoded_seq2, _ = self.BiLSTM_Encoder(emb_seq2)
+        infer_out = torch.cat([
+            encoded_seq1, 
+            encoded_seq2, 
+            torch.abs(encoded_seq1 - encoded_seq2), 
+            encoded_seq1 * encoded_seq2],
+            dim=2)
+        pooled_infer = self.MaxPooling(infer_out.permute(0,2,1)).squeeze(-1)
+        output = self.fc(pooled_infer)
+        return output
+
+class SiameseNet(nn.Module):
+    """
+    """
+    def __init__(self, model_args):
+        super(SiameseNet, self).__init__()
+        model_args.inject_to(self)
+        self.LSTM_Encoder = nn.LSTM(
+            self.emb_dim, 
+            self.hidden_dim, 
+            self.num_layers,
+            dropout=self.dropout, 
+            batch_first=True, 
+            bidirectional=True)
+        self.dense = nn.Linear(self.hiddem_dim*2, 128)
+        self.AvgPooling = nn.AdaptiveAvgPool1d(1)
+    
+    def forward(self, emb_seq1, emb_seq2):
+        encoded_seq1, _ = self.LSTM_Encoder(emb_seq1)
+        encoded_seq2, _ = self.LSTM_Encoder(emb_seq2)
+        avg1 = self.AvgPooling(encoded_seq2.permute(0,2,1)).squeeze(-1)
+        avg2 = self.AvgPooling(encoded_seq2.permute(0,2,1)).squeeze(-1)
+        after_compress1 = self.dense(avg1)# batch_size, 128
+        after_compress2 = self.dense(avg2)# batch_size, 128
+        dot_product = (after_compress1 * after_compress2).sum(dim=-1)
+        length_product = after_compress1.pow(2).sum(-1).pow(0.5) * after_compress2.pow(2).sum(-1).pow(0.5)
+        output = dot_product / length_product
+        return output
